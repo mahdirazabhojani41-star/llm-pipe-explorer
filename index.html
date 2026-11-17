@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="description" content="LLM Pipe Explorer — trace every token from prompt to answer." />
+    <title>LLM Pipe Explorer</title>
+    <style>
+      :root {
+        --bg: #0b0e13;
+        --panel: #11161e;
+        --panel-2: #151b24;
+        --panel-3: #1a212b;
+        --line: #27303c;
+        --line-soft: #1d2530;
+        --ink: #edf2f7;
+        --muted: #8b97a8;
+        --faint: #5b6675;
+        --green: #9bff9a;
+        --green-deep: #45bc72;
+        --orange: #f8a869;
+        --blue: #8fc7ff;
+        --violet: #c2a9ff;
+        --red: #ff8f88;
+        --radius: 14px;
+        --mono: "SFMono-Regular", "Roboto Mono", "Cascadia Code", Consolas, monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 78% -10%, rgba(86, 137, 112, 0.13), transparent 35%),
+          radial-gradient(circle at 2% 78%, rgba(76, 102, 164, 0.08), transparent 32%),
+          var(--bg);
+        font-family: var(--sans);
+        font-size: 13px;
+        letter-spacing: -0.01em;
+      }
+
+      button, select { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 240px minmax(650px, 1fr) 305px;
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line-soft);
+        background: rgba(13, 17, 23, 0.82);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        height: 72px;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 25px;
+        height: 25px;
+        border: 1px solid var(--green);
+        border-radius: 8px;
+        color: var(--green);
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 700;
+        box-shadow: 0 0 18px rgba(155, 255, 154, 0.12);
+      }
+      .brand-name { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; }
+      .brand-name span { color: var(--green); }
+
+      .workspace {
+        padding: 23px 17px;
+      }
+      .eyebrow {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .workspace-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 9px 5px 18px;
+        color: #cad3dd;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 27px;
+        height: 27px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        color: var(--muted);
+        background: transparent;
+      }
+      .icon-button:hover { color: var(--ink); border-color: #3a4654; background: var(--panel-2); }
+      .pipeline-list { display: grid; gap: 4px; }
+      .pipeline-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 10px 9px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        color: var(--muted);
+        background: transparent;
+        text-align: left;
+      }
+      .pipeline-item:hover { color: var(--ink); background: rgba(255,255,255,0.03); }
+      .pipeline-item.active { border-color: rgba(155,255,154,0.18); color: var(--ink); background: rgba(155,255,154,0.07); }
+      .pipeline-icon { color: var(--faint); font-family: var(--mono); font-size: 12px; }
+      .pipeline-item.active .pipeline-icon { color: var(--green); }
+      .pipeline-meta { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 10px; }
+      .new-pipeline {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        margin-top: 15px;
+        padding: 9px;
+        border: 1px dashed #34404d;
+        border-radius: 8px;
+        color: var(--muted);
+        background: transparent;
+        text-align: left;
+      }
+      .new-pipeline:hover { border-color: var(--green); color: var(--green); }
+      .sidebar-foot { margin-top: auto; padding: 18px 18px 20px; border-top: 1px solid var(--line-soft); }
+      .runtime-badge { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+      .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(155,255,154,0.09); }
+      .version { margin-top: 8px; color: var(--faint); font-family: var(--mono); font-size: 10px; }
+
+      .main {
+        min-width: 0;
+        padding: 0 32px 28px;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 72px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .breadcrumbs { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+      .breadcrumbs strong { color: #aeb9c5; font-weight: 500; }
+      .topbar-actions { display: flex; gap: 8px; }
+      .ghost-button, .primary-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 11px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: #c9d1db;
+        background: rgba(255,255,255,0.025);
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .ghost-button:hover { border-color: #475463; color: var(--ink); background: rgba(255,255,255,0.05); }
+      .primary-button { border-color: rgba(155,255,154,0.55); color: #07120c; background: var(--green); }
+      .primary-button:hover { background: #b9ffb8; box-shadow: 0 0 20px rgba(155,255,154,0.15); }
+      .primary-button.running { border-color: var(--orange); color: #1d1209; background: var(--orange); }
+
+      .hero { display: flex; align-items: end; justify-content: space-between; gap: 25px; padding: 35px 0 25px; }
+      h1 { max-width: 690px; margin: 7px 0 9px; font-size: clamp(28px, 3vw, 40px); font-weight: 680; letter-spacing: -0.05em; line-height: 1.04; }
+      .hero-copy { max-width: 540px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+      .hero-chip { align-self: start; display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid rgba(155,255,154,0.18); border-radius: 7px; color: var(--green); background: rgba(155,255,154,0.05); font-family: var(--mono); font-size: 10px; white-space: nowrap; }
+
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
+      .stat-card { padding: 14px 15px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(17,22,30,0.66); }
+      .stat-label { color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; }
+      .stat-value { margin-top: 8px; color: #dfe7ee; font-family: var(--mono); font-size: 18px; letter-spacing: -0.04em; }
+      .stat-value.green { color: var(--green); }
+      .stat-delta { margin-left: 6px; color: var(--green-deep); font-size: 10px; }
+
+      .section-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+      .section-title { color: #b6c0cc; font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+      .section-note { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+      .canvas-shell { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+      .canvas-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 45px; padding: 0 14px; border-bottom: 1px solid var(--line-soft); background: rgba(255,255,255,0.015); }
+      .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 9px; }
+      .toolbar-label { color: var(--faint); font-family: var(--mono); font-size: 10px; }
+      .zoom-control { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+      .zoom-control button { width: 21px; height: 21px; padding: 0; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: transparent; }
+      .zoom-control button:hover { color: var(--ink); background: var(--panel-3); }
+      .canvas { position: relative; min-height: 350px; padding: 51px 34px 40px; background-image: linear-gradient(rgba(128, 151, 177, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(128,151,177,0.05) 1px, transparent 1px); background-size: 27px 27px; }
+      .canvas::before { position: absolute; inset: 0; pointer-events: none; content: ""; background: radial-gradient(circle at 50% 45%, transparent 0, rgba(17,22,30,0.2) 60%, rgba(17,22,30,0.72) 100%); }
+      .flow { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 0; transform-origin: center; transition: transform .2s ease; }
+      .flow-edge { position: relative; width: 38px; height: 2px; background: #465364; }
+      .flow-edge::after { position: absolute; top: -3px; right: -1px; content: ""; border-left: 6px solid #667789; border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
+      .flow-edge.pulsing { background: var(--green); box-shadow: 0 0 12px rgba(155,255,154,0.6); }
+      .flow-edge.pulsing::after { border-left-color: var(--green); }
+      .flow-node { position: relative; width: 145px; min-height: 165px; padding: 12px; border: 1px solid #313c4a; border-radius: 11px; background: rgba(21,27,36,0.95); box-shadow: 0 13px 28px rgba(0,0,0,0.2); transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
+      .flow-node:hover { border-color: #536173; transform: translateY(-2px); }
+      .flow-node.selected { border-color: var(--green); box-shadow: 0 0 0 1px rgba(155,255,154,0.16), 0 14px 32px rgba(0,0,0,0.28); }
+      .flow-node.active { border-color: var(--orange); box-shadow: 0 0 24px rgba(248,168,105,0.16); }
+      .flow-node.done::after { position: absolute; top: 9px; right: 10px; content: "✓"; color: var(--green); font-family: var(--mono); font-size: 11px; }
+      .node-kicker { display: flex; align-items: center; gap: 6px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+      .node-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--node-color, var(--blue)); }
+      .node-name { margin: 15px 0 6px; color: #e4ebf1; font-size: 12px; font-weight: 650; line-height: 1.25; }
+      .node-description { min-height: 33px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+      .node-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 9px; border-top: 1px solid var(--line-soft); color: var(--faint); font-family: var(--mono); font-size: 9px; }
+      .node-footer strong { color: #aeb9c5; font-weight: 500; }
+      .branch { position: absolute; left: 48%; bottom: 16px; display: flex; align-items: center; gap: 8px; color: var(--orange); font-family: var(--mono); font-size: 9px; }
+      .branch-line { width: 38px; height: 18px; border-left: 1px solid var(--orange); border-bottom: 1px solid var(--orange); border-radius: 0 0 0 8px; opacity: 0.65; }
+      .branch-pill { padding: 7px 9px; border: 1px solid rgba(248,168,105,0.3); border-radius: 6px; background: rgba(248,168,105,0.06); }
+      .canvas-footer { display: flex; align-items: center; gap: 18px; min-height: 41px; padding: 0 14px; border-top: 1px solid var(--line-soft); color: var(--faint); font-family: var(--mono); font-size: 9px; }
+      .legend { display: flex; align-items: center; gap: 6px; }
+      .legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+      .legend i.orange { background: var(--orange); }
+      .legend i.blue { background: var(--blue); }
+
+      .trace-panel { margin-top: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+      .trace-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px; border-bottom: 1px solid var(--line-soft); }
+      .trace-title { display: flex; align-items: center; gap: 9px; color: #d6dee6; font-size: 12px; font-weight: 650; }
+      .trace-title .live-dot { width: 5px; height: 5px; }
+      .trace-duration { color: var(--green); font-family: var(--mono); font-size: 10px; }
+      .trace-body { padding: 3px 16px 12px; }
+      .trace-row { display: grid; grid-template-columns: 70px 1fr 72px; gap: 12px; align-items: center; min-height: 34px; border-bottom: 1px solid rgba(39,48,60,0.55); color: var(--muted); font-family: var(--mono); font-size: 10px; }
+      .trace-row:last-child { border: 0; }
+      .trace-time { color: var(--faint); }
+      .trace-event { display: flex; align-items: center; gap: 8px; }
+      .trace-event i { width: 5px; height: 5px; border-radius: 50%; background: var(--green-deep); }
+      .trace-event i.tool { background: var(--orange); }
+      .trace-event i.model { background: var(--violet); }
+      .trace-status { justify-self: end; color: var(--green-deep); }
+
+      .inspector { border-left: 1px solid var(--line-soft); background: rgba(13,17,23,0.78); }
+      .inspector-header { display: flex; align-items: center; justify-content: space-between; height: 72px; padding: 0 20px; border-bottom: 1px solid var(--line-soft); }
+      .inspector-title { color: #d1dae3; font-size: 12px; font-weight: 650; }
+      .inspector-content { padding: 22px 20px; }
+      .selected-node { display: flex; align-items: center; gap: 10px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
+      .selected-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgba(143,199,255,0.35); border-radius: 8px; color: var(--blue); background: rgba(143,199,255,0.08); font-family: var(--mono); font-size: 12px; }
+      .selected-name { color: #e8eef3; font-size: 14px; font-weight: 650; }
+      .selected-type { margin-top: 4px; color: var(--faint); font-family: var(--mono); font-size: 9px; text-transform: uppercase; }
+      .inspector-section { padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
+      .inspector-section:last-child { border-bottom: 0; }
+      .field { margin-top: 13px; }
+      .field:first-child { margin-top: 0; }
+      .field-label { display: flex; justify-content: space-between; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
+      .field-value { margin-top: 6px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; color: #b9c5d0; background: var(--panel); font-family: var(--mono); font-size: 10px; line-height: 1.45; }
+      .field-value.highlight { color: var(--green); border-color: rgba(155,255,154,0.16); background: rgba(155,255,154,0.04); }
+      select.field-value { width: 100%; appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 14px) 13px, calc(100% - 10px) 13px; background-size: 4px 4px, 4px 4px; background-repeat: no-repeat; }
+      .token-bar { overflow: hidden; height: 5px; margin-top: 8px; border-radius: 3px; background: #27303c; }
+      .token-bar span { display: block; width: 68%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-deep), var(--green)); }
+      .mini-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+      .mini-stat { padding: 9px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--panel); }
+      .mini-stat-label { color: var(--faint); font-family: var(--mono); font-size: 8px; text-transform: uppercase; }
+      .mini-stat-value { margin-top: 5px; color: #cad4de; font-family: var(--mono); font-size: 11px; }
+
+      .toast { position: fixed; right: 22px; bottom: 22px; z-index: 10; max-width: 280px; padding: 11px 13px; border: 1px solid rgba(155,255,154,0.22); border-radius: 8px; color: #d9f5dc; background: #17251c; box-shadow: 0 12px 30px rgba(0,0,0,.3); font-size: 11px; opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+      .toast.show { opacity: 1; transform: translateY(0); }
+      .empty-state { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+
+      @media (max-width: 1200px) {
+        .app-shell { grid-template-columns: 210px minmax(630px, 1fr); }
+        .inspector { display: none; }
+        .main { padding-right: 24px; }
+      }
+      @media (max-width: 820px) {
+        .app-shell { display: block; }
+        .sidebar { display: none; }
+        .main { padding: 0 16px 28px; }
+        .hero { display: block; padding-top: 26px; }
+        .hero-chip { display: inline-flex; margin-top: 17px; }
+        .stats { grid-template-columns: repeat(2, 1fr); }
+        .canvas { overflow-x: auto; padding-left: 18px; padding-right: 18px; }
+        .flow { width: max-content; justify-content: flex-start; }
+        .topbar-actions .ghost-button:first-child { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">&gt;_</div>
+          <div class="brand-name">PIPE<span>/</span>EXPLORER</div>
+        </div>
+        <div class="workspace">
+          <div class="eyebrow">workspace</div>
+          <div class="workspace-title">
+            <span>My pipelines</span>
+            <button class="icon-button" id="refreshPipelines" aria-label="Refresh pipelines" title="Refresh pipelines">↻</button>
+          </div>
+          <div class="pipeline-list" id="pipelineList">
+            <button class="pipeline-item active" data-pipeline="Support copilot">
+              <span class="pipeline-icon">◈</span><span>Support copilot</span><span class="pipeline-meta">06</span>
+            </button>
+            <button class="pipeline-item" data-pipeline="RAG evaluation">
+              <span class="pipeline-icon">◇</span><span>RAG evaluation</span><span class="pipeline-meta">08</span>
+            </button>
+            <button class="pipeline-item" data-pipeline="JSON extractor">
+              <span class="pipeline-icon">▦</span><span>JSON extractor</span><span class="pipeline-meta">04</span>
+            </button>
+          </div>
+          <button class="new-pipeline" id="newPipeline"><span>＋</span> New pipeline</button>
+        </div>
+        <div class="sidebar-foot">
+          <div class="runtime-badge"><span class="live-dot"></span> Local runtime connected</div>
+          <div class="version">pipe-explorer v0.4.2</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="topbar">
+          <div class="breadcrumbs">workspace <span>/</span> pipelines <span>/</span> <strong id="breadcrumbName">support-copilot</strong></div>
+          <div class="topbar-actions">
+            <button class="ghost-button" id="exportButton">↓ Export JSON</button>
+            <button class="ghost-button" id="shareButton">↗ Share</button>
+            <button class="primary-button" id="runButton">▶ Run sample</button>
+          </div>
+        </div>
+
+        <section class="hero">
+          <div>
+            <div class="eyebrow">pipeline observability / 04</div>
+            <h1>Trace every token between prompt and answer.</h1>
+            <p class="hero-copy">Inspect the path your request takes through retrieval, context assembly, model inference, and tools — with a replayable trace for every run.</p>
+          </div>
+          <div class="hero-chip"><span class="live-dot"></span> SAMPLE DATA · NO API KEY</div>
+        </section>
+
+        <section class="stats" aria-label="Pipeline metrics">
+          <div class="stat-card"><div class="stat-label">stages</div><div class="stat-value" id="stageCount">06</div></div>
+          <div class="stat-card"><div class="stat-label">last run</div><div class="stat-value" id="lastRun">86ms <span class="stat-delta">−12%</span></div></div>
+          <div class="stat-card"><div class="stat-label">input tokens</div><div class="stat-value" id="tokenCount">1,248</div></div>
+          <div class="stat-card"><div class="stat-label">confidence</div><div class="stat-value green" id="confidence">98.4%</div></div>
+        </section>
+
+        <section aria-labelledby="canvasTitle">
+          <div class="section-heading"><div class="section-title" id="canvasTitle">Live pipeline</div><div class="section-note">click a node to inspect</div></div>
+          <div class="canvas-shell">
+            <div class="canvas-toolbar">
+              <div class="toolbar-left"><span class="toolbar-label">graph / support-copilot</span><span class="live-dot"></span></div>
+              <div class="toolbar-right"><span class="toolbar-label">fit to view</span><div class="zoom-control"><button id="zoomOut" aria-label="Zoom out">−</button><span id="zoomValue">100%</span><button id="zoomIn" aria-label="Zoom in">＋</button></div></div>
+            </div>
+            <div class="canvas">
+              <div class="flow" id="flow"></div>
+              <div class="branch"><div class="branch-line"></div><div class="branch-pill">↗ 1 tool call · search_docs</div></div>
+            </div>
+            <div class="canvas-footer">
+              <span class="legend"><i></i> completed</span><span class="legend"><i class="orange"></i> tool call</span><span class="legend"><i class="blue"></i> selected</span><span style="margin-left:auto">drag canvas to pan · scroll to zoom</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="trace-panel" aria-labelledby="traceTitle">
+          <div class="trace-head"><div class="trace-title"><span class="live-dot"></span><span id="traceTitle">Latest trace</span></div><div class="trace-duration" id="traceDuration">86ms total</div></div>
+          <div class="trace-body" id="traceBody">
+            <div class="trace-row"><span class="trace-time">00:00.000</span><span class="trace-event"><i></i>input.received</span><span class="trace-status">200 OK</span></div>
+            <div class="trace-row"><span class="trace-time">00:00.011</span><span class="trace-event"><i></i>retriever.completed</span><span class="trace-status">12 docs</span></div>
+            <div class="trace-row"><span class="trace-time">00:00.024</span><span class="trace-event"><i class="tool"></i>tool.search_docs</span><span class="trace-status">42ms</span></div>
+            <div class="trace-row"><span class="trace-time">00:00.069</span><span class="trace-event"><i class="model"></i>model.stream</span><span class="trace-status">1,021 tok</span></div>
+            <div class="trace-row"><span class="trace-time">00:00.086</span><span class="trace-event"><i></i>output.validated</span><span class="trace-status">pass</span></div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <div class="inspector-header"><span class="inspector-title">Inspector</span><button class="icon-button" id="closeInspector" aria-label="Collapse inspector">×</button></div>
+        <div class="inspector-content" id="inspectorContent"></div>
+      </aside>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const pipelines = {
+        "Support copilot": {
+          slug: "support-copilot",
+          stages: [
+            { id: "input", kind: "input", label: "Input", name: "User prompt", description: "A customer asks about a delayed order.", color: "#8fc7ff", latency: "3ms", metric: "1,248 tok", type: "source", input: "Where is order #4829?", output: "normalized request", detail: "The incoming request is normalized, tagged, and ready for routing." },
+            { id: "retriever", kind: "retriever", label: "Retrieve", name: "Knowledge search", description: "Find relevant order and policy context.", color: "#9bff9a", latency: "11ms", metric: "12 docs", type: "retriever", input: "order_id: 4829", output: "12 ranked chunks", detail: "Hybrid search combines semantic similarity with exact order-id matching." },
+            { id: "context", kind: "context", label: "Assemble", name: "Context window", description: "Compress evidence into a focused window.", color: "#c2a9ff", latency: "8ms", metric: "3.2k tok", type: "transform", input: "12 ranked chunks", output: "3,240 tokens", detail: "The context builder removes duplicates and preserves citations." },
+            { id: "model", kind: "model", label: "Infer", name: "GPT-4.1 mini", description: "Stream a grounded answer with citations.", color: "#c2a9ff", latency: "42ms", metric: "1,021 tok", type: "model", input: "system + context", output: "draft response", detail: "Streaming inference with a low-temperature support policy." },
+            { id: "guard", kind: "guard", label: "Guard", name: "Policy check", description: "Verify claims, tone, and PII.", color: "#f8a869", latency: "17ms", metric: "pass", type: "guardrail", input: "draft response", output: "approved", detail: "Checks citations, sensitive data, and escalation rules before release." },
+            { id: "output", kind: "output", label: "Output", name: "Customer reply", description: "Return the final answer to the user.", color: "#9bff9a", latency: "5ms", metric: "streamed", type: "sink", input: "approved response", output: "final answer", detail: "The answer is streamed back with trace metadata attached." }
+          ]
+        },
+        "RAG evaluation": {
+          slug: "rag-evaluation",
+          stages: [
+            { id: "input", kind: "input", label: "Input", name: "Eval question", description: "A benchmark question enters the run.", color: "#8fc7ff", latency: "2ms", metric: "40 q", type: "source", input: "benchmark item", output: "normalized query", detail: "Evaluation inputs are normalized into a stable test contract." },
+            { id: "retriever", kind: "retriever", label: "Retrieve", name: "Vector search", description: "Pull the top-k candidate passages.", color: "#9bff9a", latency: "16ms", metric: "top 8", type: "retriever", input: "query embedding", output: "8 passages", detail: "Candidate passages are fetched with a configurable top-k cutoff." },
+            { id: "context", kind: "context", label: "Assemble", name: "Context window", description: "Pack evidence for the judge model.", color: "#c2a9ff", latency: "9ms", metric: "2.6k tok", type: "transform", input: "8 passages", output: "context pack", detail: "The context pack is trimmed to match the judge model budget." },
+            { id: "model", kind: "model", label: "Infer", name: "Answer model", description: "Generate an answer and citations.", color: "#c2a9ff", latency: "58ms", metric: "842 tok", type: "model", input: "question + context", output: "candidate answer", detail: "The answer model generates a candidate response for evaluation." },
+            { id: "guard", kind: "guard", label: "Judge", name: "Groundedness", description: "Score evidence coverage and faithfulness.", color: "#f8a869", latency: "34ms", metric: "0.91", type: "evaluator", input: "candidate answer", output: "scores", detail: "A judge model compares claims against the retrieved evidence." },
+            { id: "output", kind: "output", label: "Output", name: "Eval report", description: "Store trace-level quality scores.", color: "#9bff9a", latency: "4ms", metric: "saved", type: "sink", input: "scores + trace", output: "report row", detail: "Scores and trace metadata are written to the evaluation report." }
+          ]
+        },
+        "JSON extractor": {
+          slug: "json-extractor",
+          stages: [
+            { id: "input", kind: "input", label: "Input", name: "Raw document", description: "A receipt PDF is uploaded for parsing.", color: "#8fc7ff", latency: "7ms", metric: "1 file", type: "source", input: "receipt.pdf", output: "page text", detail: "The uploaded document is converted into structured page text." },
+            { id: "retriever", kind: "retriever", label: "Parse", name: "Layout parser", description: "Read fields, tables, and line items.", color: "#9bff9a", latency: "21ms", metric: "24 fields", type: "transform", input: "page text", output: "field candidates", detail: "Layout-aware parsing identifies labels, values, and table boundaries." },
+            { id: "context", kind: "context", label: "Assemble", name: "Schema prompt", description: "Bind candidates to the target schema.", color: "#c2a9ff", latency: "6ms", metric: "680 tok", type: "transform", input: "field candidates", output: "schema prompt", detail: "The prompt includes examples and strict output instructions." },
+            { id: "model", kind: "model", label: "Infer", name: "Structured output", description: "Map text into typed JSON fields.", color: "#c2a9ff", latency: "49ms", metric: "JSON mode", type: "model", input: "schema prompt", output: "candidate JSON", detail: "The model responds in schema-constrained JSON mode." },
+            { id: "output", kind: "output", label: "Output", name: "Validated object", description: "Return a schema-safe record.", color: "#9bff9a", latency: "3ms", metric: "valid", type: "sink", input: "candidate JSON", output: "receipt object", detail: "The object is validated against the schema before handoff." }
+          ]
+        }
+      };
+
+      let activePipeline = pipelines["Support copilot"];
+      let selectedStage = activePipeline.stages[3];
+      let zoom = 100;
+      let running = false;
+      let runTimer;
+
+      const flow = document.getElementById("flow");
+      const inspectorContent = document.getElementById("inspectorContent");
+      const toast = document.getElementById("toast");
+      const runButton = document.getElementById("runButton");
+
+      function iconFor(kind) {
+        return { input: "↳", retriever: "⌕", context: "⊞", model: "✦", guard: "◇", output: "↗" }[kind] || "·";
+      }
+
+      function renderFlow() {
+        flow.innerHTML = "";
+        activePipeline.stages.forEach((stage, index) => {
+          const node = document.createElement("button");
+          node.className = "flow-node" + (stage.id === selectedStage.id ? " selected" : "");
+          node.dataset.stageId = stage.id;
+          node.style.setProperty("--node-color", stage.color);
+          node.innerHTML = `<div class="node-kicker"><span class="node-dot"></span>${stage.label}</div><div class="node-name">${stage.name}</div><div class="node-description">${stage.description}</div><div class="node-footer"><span>${stage.latency}</span><strong>${stage.metric}</strong></div>`;
+          node.addEventListener("click", () => {
+            selectedStage = stage;
+            renderFlow();
+            renderInspector();
+          });
+          flow.appendChild(node);
+          if (index < activePipeline.stages.length - 1) {
+            const edge = document.createElement("div");
+            edge.className = "flow-edge";
+            flow.appendChild(edge);
+          }
+        });
+        flow.style.transform = `scale(${zoom / 100})`;
+        document.getElementById("zoomValue").textContent = `${zoom}%`;
+      }
+
+      function renderInspector() {
+        const stage = selectedStage;
+        inspectorContent.innerHTML = `<div class="selected-node"><div class="selected-icon" style="color:${stage.color};border-color:${stage.color}55;background:${stage.color}12">${iconFor(stage.kind)}</div><div><div class="selected-name">${stage.name}</div><div class="selected-type">${stage.type} · ${stage.id}</div></div></div><div class="inspector-section"><div class="eyebrow">node details</div><div class="field"><div class="field-label"><span>description</span><span>01</span></div><div class="field-value">${stage.detail}</div></div><div class="field"><div class="field-label"><span>input</span><span>↘</span></div><div class="field-value">${stage.input}</div></div><div class="field"><div class="field-label"><span>output</span><span>↗</span></div><div class="field-value highlight">${stage.output}</div></div></div><div class="inspector-section"><div class="eyebrow">configuration</div><div class="field"><div class="field-label"><span>execution mode</span></div><select class="field-value" id="executionMode"><option>streaming</option><option>blocking</option><option>replay only</option></select></div><div class="field"><div class="field-label"><span>token budget</span><span>68%</span></div><div class="token-bar"><span></span></div></div><div class="mini-stats"><div class="mini-stat"><div class="mini-stat-label">latency</div><div class="mini-stat-value">${stage.latency}</div></div><div class="mini-stat"><div class="mini-stat-label">status</div><div class="mini-stat-value" style="color:var(--green)">ready</div></div></div></div>`;
+        document.getElementById("executionMode").addEventListener("change", (event) => showToast(`${stage.name} set to ${event.target.value}`));
+      }
+
+      function renderPipeline(name) {
+        activePipeline = pipelines[name];
+        selectedStage = activePipeline.stages[Math.min(3, activePipeline.stages.length - 1)];
+        document.getElementById("breadcrumbName").textContent = activePipeline.slug;
+        document.querySelector(".toolbar-label").textContent = `graph / ${activePipeline.slug}`;
+        document.getElementById("stageCount").textContent = String(activePipeline.stages.length).padStart(2, "0");
+        renderFlow();
+        renderInspector();
+        showToast(`${name} loaded`);
+      }
+
+      function showToast(message) {
+        toast.textContent = message;
+        toast.classList.add("show");
+        clearTimeout(showToast.timer);
+        showToast.timer = setTimeout(() => toast.classList.remove("show"), 2600);
+      }
+
+      function updateTrace(stage, index) {
+        const time = `00:00.${String(Math.min(99, 8 + index * 13)).padStart(3, "0")}`;
+        const status = index === activePipeline.stages.length - 1 ? "pass" : stage.metric;
+        const eventName = index === 0 ? "input.received" : index === activePipeline.stages.length - 1 ? "output.validated" : `${stage.id}.completed`;
+        const toolClass = stage.kind === "guard" ? "tool" : stage.kind === "model" ? "model" : "";
+        const row = document.createElement("div");
+        row.className = "trace-row";
+        row.innerHTML = `<span class="trace-time">${time}</span><span class="trace-event"><i class="${toolClass}"></i>${eventName}</span><span class="trace-status">${status}</span>`;
+        document.getElementById("traceBody").appendChild(row);
+      }
+
+      function runSample() {
+        if (running) {
+          clearInterval(runTimer);
+          running = false;
+          runButton.classList.remove("running");
+          runButton.textContent = "▶ Run sample";
+          document.querySelectorAll(".flow-node").forEach(node => node.classList.remove("active"));
+          showToast("Run stopped");
+          return;
+        }
+        running = true;
+        runButton.classList.add("running");
+        runButton.textContent = "■ Stop run";
+        document.getElementById("traceBody").innerHTML = "";
+        document.getElementById("traceDuration").textContent = "running…";
+        let index = 0;
+        document.querySelectorAll(".flow-node").forEach(node => node.classList.remove("done", "active"));
+        document.querySelectorAll(".flow-edge").forEach(edge => edge.classList.remove("pulsing"));
+        runTimer = setInterval(() => {
+          const nodes = [...document.querySelectorAll(".flow-node")];
+          const edges = [...document.querySelectorAll(".flow-edge")];
+          nodes.forEach((node, nodeIndex) => node.classList.toggle("done", nodeIndex < index));
+          nodes.forEach(node => node.classList.remove("active"));
+          if (nodes[index]) nodes[index].classList.add("active");
+          edges.forEach((edge, edgeIndex) => edge.classList.toggle("pulsing", edgeIndex < index));
+          if (activePipeline.stages[index]) updateTrace(activePipeline.stages[index], index);
+          index += 1;
+          if (index > activePipeline.stages.length) {
+            clearInterval(runTimer);
+            running = false;
+            runButton.classList.remove("running");
+            runButton.textContent = "▶ Run sample";
+            document.querySelectorAll(".flow-node").forEach(node => { node.classList.remove("active"); node.classList.add("done"); });
+            document.getElementById("traceDuration").textContent = `${activePipeline.stages.length === 5 ? 78 : 86}ms total`;
+            document.getElementById("lastRun").innerHTML = `${activePipeline.stages.length === 5 ? 78 : 86}ms <span class="stat-delta">−12%</span>`;
+            showToast("Sample trace complete");
+          }
+        }, 420);
+      }
+
+      function exportPipeline() {
+        const payload = { name: activePipeline.slug, stages: activePipeline.stages.map(({ id, name, type, latency, input, output }) => ({ id, name, type, latency, input, output })) };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${activePipeline.slug}.json`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        showToast("Pipeline JSON exported");
+      }
+
+      document.querySelectorAll(".pipeline-item").forEach(item => item.addEventListener("click", () => {
+        document.querySelectorAll(".pipeline-item").forEach(button => button.classList.remove("active"));
+        item.classList.add("active");
+        renderPipeline(item.dataset.pipeline);
+      }));
+      document.getElementById("runButton").addEventListener("click", runSample);
+      document.getElementById("exportButton").addEventListener("click", exportPipeline);
+      document.getElementById("shareButton").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(window.location.href); showToast("Share link copied"); }
+        catch { showToast("Share link ready to copy"); }
+      });
+      document.getElementById("refreshPipelines").addEventListener("click", () => showToast("Pipelines are up to date"));
+      document.getElementById("newPipeline").addEventListener("click", () => showToast("Create flow coming soon"));
+      document.getElementById("closeInspector").addEventListener("click", () => showToast("Inspector stays pinned in this preview"));
+      document.getElementById("zoomIn").addEventListener("click", () => { zoom = Math.min(120, zoom + 10); renderFlow(); });
+      document.getElementById("zoomOut").addEventListener("click", () => { zoom = Math.max(80, zoom - 10); renderFlow(); });
+
+      renderFlow();
+      renderInspector();
+    </script>
+  </body>
+</html>
